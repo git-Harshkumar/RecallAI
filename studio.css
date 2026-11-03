@@ -476,6 +476,29 @@ html, body {
   justify-content: space-between;
   margin-bottom: 4px;
 }
+.hl-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hl-remove-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hl-remove-btn:hover {
+  border-color: var(--accent-rose);
+  background: rgba(244, 63, 94, 0.12);
+  color: var(--accent-rose);
+}
 .hl-tag-badge {
   font-size: 10px;
   font-weight: 700;
@@ -1030,8 +1053,10 @@ mark.hl-orange { background: var(--hl-orange); color: var(--hl-orange-text); }
 
 /* Color swatch buttons for floating highlighter */
 .hl-swatch {
+  display: block;
   width: 18px;
   height: 18px;
+  padding: 0;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -1046,6 +1071,20 @@ mark.hl-orange { background: var(--hl-orange); color: var(--hl-orange-text); }
 .swatch-pink   { background: var(--hl-pink); }
 .swatch-blue   { background: var(--hl-blue); }
 .swatch-orange { background: var(--hl-orange); }
+.swatch-transparent {
+  border-color: #cbd5e1;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #94a3b8 25%, transparent 25%),
+    linear-gradient(-45deg, #94a3b8 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #94a3b8 75%),
+    linear-gradient(-45deg, transparent 75%, #94a3b8 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.swatch-transparent:hover {
+  border-color: #fff;
+}
 
 /* ── Digital Whiteboard Modal ── */
 .modal-overlay {
