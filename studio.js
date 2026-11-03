@@ -685,6 +685,8 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
   }
 
   // ── Floating Highlighter Toolbar (Obsidian / Google Docs Style) ───────────
+  let savedSelectionRange = null;
+
   document.addEventListener('selectionchange', handleTextSelection);
 
   function handleTextSelection() {
@@ -694,50 +696,58 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
       return;
     }
 
-    // Only show if selection is within the document workspace
     const range = sel.getRangeAt(0);
     const commonAncestor = range.commonAncestorContainer;
-    const isInsideDoc = sectionsContainer.contains(commonAncestor.nodeType === 1 ? commonAncestor : commonAncestor.parentElement);
+    const ancestorElement = commonAncestor.nodeType === Node.ELEMENT_NODE
+      ? commonAncestor
+      : commonAncestor.parentElement;
+    const blockBody = ancestorElement?.closest('.block-body');
 
-    if (!isInsideDoc) {
+    if (!blockBody || !sectionsContainer.contains(blockBody)) {
       floatingToolbar.style.display = 'none';
       return;
     }
 
+    savedSelectionRange = range.cloneRange();
     const rect = range.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
       floatingToolbar.style.display = 'flex';
-      floatingToolbar.style.top = `${rect.top + window.scrollY - 44}px`;
-      floatingToolbar.style.left = `${rect.left + window.scrollX + (rect.width / 2) - (floatingToolbar.offsetWidth / 2)}px`;
+      floatingToolbar.style.position = 'fixed';
+      floatingToolbar.style.top = `${Math.max(8, rect.top - 44)}px`;
+      const left = rect.left + (rect.width / 2) - (floatingToolbar.offsetWidth / 2);
+      floatingToolbar.style.left = `${Math.max(8, Math.min(left, window.innerWidth - floatingToolbar.offsetWidth - 8))}px`;
     }
   }
 
+  floatingToolbar.addEventListener('mousedown', event => event.preventDefault());
+
   // Floating Highlighter Swatches
-  document.querySelectorAll('.hl-swatch').forEach(swatch => {
+  document.querySelectorAll('.hl-swatch[data-color]').forEach(swatch => {
     swatch.addEventListener('click', (e) => {
       e.stopPropagation();
       const color = swatch.getAttribute('data-color');
       applyHighlight(color);
     });
   });
+  document.getElementById('btn-float-clear-hl')?.addEventListener('click', event => {
+    event.stopPropagation();
+    clearHighlightFromSelection();
+  });
 
   function applyHighlight(color) {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) return;
-
-    const range = sel.getRangeAt(0);
-    const selectedText = sel.toString();
+    const range = getSavedSelectionRange();
+    if (!range) return;
 
     const mark = document.createElement('mark');
     mark.className = `hl hl-${color}`;
     mark.dataset.color = color;
     mark.dataset.id = 'hl-' + Math.random().toString(36).substring(2, 8);
-    mark.textContent = selectedText;
-
-    range.deleteContents();
+    const selectedContent = range.extractContents();
+    selectedContent.querySelectorAll('mark.hl').forEach(unwrapHighlight);
+    mark.appendChild(selectedContent);
     range.insertNode(mark);
 
-    sel.removeAllRanges();
+    clearSavedSelection();
     floatingToolbar.style.display = 'none';
 
     syncActiveBlockContent(mark);
@@ -751,6 +761,7 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const cmd = btn.getAttribute('data-cmd');
+      restoreSavedSelection();
       document.execCommand(cmd, false, null);
     });
   });
@@ -759,21 +770,18 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
   document.getElementById('btn-float-comment')?.addEventListener('click', () => {
     const note = prompt('Add student margin note / comment on this concept:');
     if (note && note.trim()) {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
-
-      const range = sel.getRangeAt(0);
+      const range = getSavedSelectionRange();
+      if (!range) return;
       const mark = document.createElement('mark');
       mark.className = 'hl hl-yellow';
       mark.dataset.color = 'yellow';
       mark.dataset.note = note.trim();
       mark.title = `Student Note: ${note.trim()}`;
-      mark.textContent = sel.toString();
 
-      range.deleteContents();
+      mark.appendChild(range.extractContents());
       range.insertNode(mark);
 
-      sel.removeAllRanges();
+      clearSavedSelection();
       floatingToolbar.style.display = 'none';
 
       syncActiveBlockContent(mark);
@@ -783,23 +791,127 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
     }
   });
 
-  // Clear Highlight
-  document.getElementById('btn-float-clear-hl')?.addEventListener('click', () => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) return;
+  function clearHighlightFromSelection() {
+    const range = getSavedSelectionRange();
+    if (!range) return;
+    const ancestor = range.commonAncestorContainer;
+    const ancestorElement = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
+    const blockBody = ancestorElement?.closest('.block-body');
+    if (!blockBody) return;
 
-    const range = sel.getRangeAt(0);
-    const parentMark = range.commonAncestorContainer.parentElement?.closest('mark.hl');
-    if (parentMark) {
-      const text = document.createTextNode(parentMark.textContent);
-      parentMark.parentNode.replaceChild(text, parentMark);
-      floatingToolbar.style.display = 'none';
-      syncActiveBlockContent(text);
-      renderHighlightsSummary();
-      saveToStorage();
-      showToast('Highlight removed', '✕');
+    const selectedMarks = [...blockBody.querySelectorAll('mark.hl')]
+      .filter(mark => range.intersectsNode(mark))
+      .filter(mark => !mark.parentElement.closest('mark.hl'));
+    if (selectedMarks.length === 0) {
+      showToast('Select highlighted text to remove its color', '🖍️');
+      return;
     }
-  });
+
+    selectedMarks.reverse().forEach(mark => removeSelectedHighlight(mark, range));
+
+    clearSavedSelection();
+    floatingToolbar.style.display = 'none';
+    syncActiveBlockContent(blockBody);
+    renderHighlightsSummary();
+    saveToStorage();
+    showToast('Highlight removed from selected text', '◻');
+  }
+
+  function removeSelectedHighlight(mark, selectionRange) {
+    if (!mark.isConnected) return;
+    const markRange = document.createRange();
+    markRange.selectNodeContents(mark);
+
+    const startIsBeforeMark = selectionRange.compareBoundaryPoints(Range.START_TO_START, markRange) <= 0;
+    const endIsAfterMark = selectionRange.compareBoundaryPoints(Range.END_TO_END, markRange) >= 0;
+    if (startIsBeforeMark && endIsAfterMark) {
+      mark.querySelectorAll('mark.hl').forEach(unwrapHighlight);
+      unwrapHighlight(mark);
+      return;
+    }
+
+    const selectedPart = document.createRange();
+    if (startIsBeforeMark) {
+      selectedPart.setStart(markRange.startContainer, markRange.startOffset);
+    } else {
+      selectedPart.setStart(selectionRange.startContainer, selectionRange.startOffset);
+    }
+    if (endIsAfterMark) {
+      selectedPart.setEnd(markRange.endContainer, markRange.endOffset);
+    } else {
+      selectedPart.setEnd(selectionRange.endContainer, selectionRange.endOffset);
+    }
+    if (selectedPart.collapsed) return;
+
+    const clearSpan = document.createElement('span');
+    clearSpan.appendChild(selectedPart.extractContents());
+    selectedPart.insertNode(clearSpan);
+
+    let selectedNode = clearSpan;
+    while (selectedNode.parentNode !== mark) {
+      const wrapper = selectedNode.parentNode;
+      const parent = wrapper.parentNode;
+      const selectedWrapper = wrapper.cloneNode(false);
+      const suffix = wrapper.cloneNode(false);
+      const followingNodes = [];
+      for (let sibling = selectedNode.nextSibling; sibling; sibling = sibling.nextSibling) {
+        followingNodes.push(sibling);
+      }
+
+      selectedWrapper.appendChild(selectedNode);
+      followingNodes.forEach(node => suffix.appendChild(node));
+      parent.insertBefore(selectedWrapper, wrapper.nextSibling);
+      if (suffix.hasChildNodes()) parent.insertBefore(suffix, selectedWrapper.nextSibling);
+      if (!wrapper.hasChildNodes()) wrapper.remove();
+      selectedNode = selectedWrapper;
+    }
+
+    const prefix = mark.cloneNode(false);
+    const suffix = mark.cloneNode(false);
+    let afterSelectedPart = false;
+    Array.from(mark.childNodes).forEach(node => {
+      if (node === selectedNode) {
+        afterSelectedPart = true;
+      } else {
+        (afterSelectedPart ? suffix : prefix).appendChild(node);
+      }
+    });
+
+    if (selectedNode.matches('mark.hl')) {
+      const holder = document.createElement('span');
+      while (selectedNode.firstChild) holder.appendChild(selectedNode.firstChild);
+      selectedNode.replaceWith(holder);
+      selectedNode = holder;
+    }
+    selectedNode.querySelectorAll('mark.hl').forEach(unwrapHighlight);
+    const parent = mark.parentNode;
+    if (prefix.hasChildNodes()) parent.insertBefore(prefix, mark);
+    parent.insertBefore(selectedNode, mark);
+    if (suffix.hasChildNodes()) parent.insertBefore(suffix, mark);
+    mark.remove();
+    if (selectedNode.contains(clearSpan)) unwrapHighlight(clearSpan);
+  }
+
+  function getSavedSelectionRange() {
+    if (!savedSelectionRange || !savedSelectionRange.startContainer.isConnected ||
+        !savedSelectionRange.endContainer.isConnected) return null;
+    const ancestor = savedSelectionRange.commonAncestorContainer;
+    const element = ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement;
+    return element?.closest('.block-body') ? savedSelectionRange.cloneRange() : null;
+  }
+
+  function restoreSavedSelection() {
+    const range = getSavedSelectionRange();
+    if (!range) return;
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function clearSavedSelection() {
+    window.getSelection()?.removeAllRanges();
+    savedSelectionRange = null;
+  }
 
   function syncActiveBlockContent(el) {
     const blockBody = (el.nodeType === 1 ? el : el.parentElement)?.closest('.block-body');
@@ -839,11 +951,25 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
           <span class="hl-tag-badge" style="background:var(--hl-${color});color:var(--hl-${color}-text);">
             ${color.toUpperCase()}
           </span>
-          <span style="font-size:10px;color:var(--text-muted);">#${i + 1}</span>
+          <div class="hl-item-actions">
+            <span style="font-size:10px;color:var(--text-muted);">#${i + 1}</span>
+          </div>
         </div>
         <div class="hl-quote-text">"${text}"</div>
         ${note ? `<div class="hl-note-text">💬 ${note}</div>` : ''}
       `;
+
+      const removeButton = document.createElement('button');
+      removeButton.className = 'hl-remove-btn';
+      removeButton.type = 'button';
+      removeButton.textContent = '×';
+      removeButton.title = 'Remove this highlight';
+      removeButton.setAttribute('aria-label', 'Remove this highlight');
+      removeButton.addEventListener('click', event => {
+        event.stopPropagation();
+        removeHighlight(mark);
+      });
+      pill.querySelector('.hl-item-actions').appendChild(removeButton);
 
       pill.addEventListener('click', () => {
         mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -855,11 +981,24 @@ def gradient_descent(X, y, alpha=0.01, iterations=1000):
     });
   }
 
+  function removeHighlight(mark) {
+    if (!mark.isConnected) return;
+    const blockBody = mark.closest('.block-body');
+    unwrapHighlight(mark);
+    if (blockBody) syncActiveBlockContent(blockBody);
+    renderHighlightsSummary();
+    saveToStorage();
+    showToast('Highlight removed', '✕');
+  }
+
+  function unwrapHighlight(mark) {
+    mark.replaceWith(...Array.from(mark.childNodes));
+  }
+
   document.getElementById('btn-clear-all-hl')?.addEventListener('click', () => {
     if (confirm('Clear all highlights across your notes?')) {
       sectionsContainer.querySelectorAll('mark.hl').forEach(mark => {
-        const text = document.createTextNode(mark.textContent);
-        mark.parentNode.replaceChild(text, mark);
+        unwrapHighlight(mark);
       });
       sections.forEach(s => {
         const bodyEl = document.querySelector(`.block-body[data-id="${s.id}"]`);

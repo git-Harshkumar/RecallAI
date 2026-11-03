@@ -2089,18 +2089,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     const rawNote = cachedNotes[currentLevel]?.[currentLang] || '';
     const vId = curVideoId || '';
     const title = curVideoTitle ? `${curVideoTitle} — RecallAI Notes` : `RecallAI ${currentLevel.toUpperCase()} Lecture Notes`;
-    
-    chrome.runtime.sendMessage({
-      action: 'OPEN_STUDIO_PAGE',
-      data: {
-        markdown: rawNote,
-        title: title,
-        videoId: vId,
-        level: currentLevel,
-        lang: currentLang,
-        timeline: curTimeline,
-        keyframes: curKeyframesMap
+
+    const key = vId ? `rc_practice_notes_${vId}` : '';
+    chrome.storage.local.get(key ? [key] : [], stored => {
+      if (chrome.runtime.lastError) {
+        showToast(`Could not load saved practice points: ${chrome.runtime.lastError.message}`, '⚠️');
+        return;
       }
+
+      const savedPoints = key && Array.isArray(stored[key]) ? stored[key] : [];
+      const practiceMarkdown = savedPoints.length
+        ? `\n\n## Important Points from Practice Quiz\n${savedPoints.map(point => `- ${escapeHtml(String(point.content || '').replace(/\s+/g, ' ').trim())}`).join('\n')}`
+        : '';
+      chrome.runtime.sendMessage({
+        action: 'OPEN_STUDIO_PAGE',
+        data: {
+          markdown: rawNote + practiceMarkdown,
+          title: title,
+          videoId: vId,
+          level: currentLevel,
+          lang: currentLang,
+          timeline: curTimeline,
+          keyframes: curKeyframesMap
+        }
+      }, response => {
+        if (chrome.runtime.lastError || !response?.ok) {
+          showToast(`Could not open Notes Studio: ${chrome.runtime.lastError?.message || response?.error || 'unknown error'}`, '⚠️');
+        }
+      });
     });
   }
 
@@ -2206,6 +2222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let prState = {
     level: 'overview',
     lang: 'english',
+    sessionId: '',
     questions: null,       // { mcq, fill_blanks, long_answer }
     mcqAnswers: [],        // user's selected option index per MCQ question
     mcqCurrentIdx: 0,      // which MCQ question is showing
@@ -2251,7 +2268,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function openPracticePanel() {
     if (!practicePanel) return;
     // Reset state
-    prState = { level: prState.level, lang: prState.lang, questions: null, mcqAnswers: [], mcqCurrentIdx: 0, fibAnswers: [], longImages: [], scores: null, mcqResults: [], fibResults: [], longEvals: [] };
+    prState = { level: prState.level, lang: prState.lang, sessionId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, questions: null, mcqAnswers: [], mcqCurrentIdx: 0, fibAnswers: [], longImages: [], scores: null, mcqResults: [], fibResults: [], longEvals: [] };
     practicePanel.classList.remove('hidden');
     prShowStep('config');
     prHideMsg('pr-config-msg');
@@ -2765,10 +2782,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div class="pr-result-body">
             <div class="pr-result-detail">Your answer: <strong>${selLetter !== '—' ? selLetter + ' — ' + (q.options[r.selectedIdx] || '—') : 'Not answered'}</strong></div>
             ${!r.correct ? `<div class="pr-result-correct-ans">✓ Correct: ${corLetter !== '?' ? corLetter + ' — ' + (q.options[r.correctIdx] || '') : 'See your notes'}</div>` : ''}
+            ${prNoteActionsMarkup('mcq', i)}
           </div>
         </div>`;
     }).join('');
     prBindAccordion(container);
+    bindPracticeNoteActions(container);
   }
 
   function prRenderFIBResults() {
@@ -2790,10 +2809,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           <div class="pr-result-body">
             <div class="pr-result-detail">Your answer: <strong>${r.userAns || '(empty)'}</strong></div>
             ${!r.correct ? `<div class="pr-result-correct-ans">✓ Correct answer: ${r.correctAns || 'See your notes'}</div>` : ''}
+            ${prNoteActionsMarkup('fib', i)}
           </div>
         </div>`;
     }).join('');
     prBindAccordion(container);
+    bindPracticeNoteActions(container);
   }
 
   function prRenderLongResults() {
@@ -2826,10 +2847,114 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <div style="font-size:11.5px;font-weight:400;color:var(--text);background:rgba(0,0,0,0.25);border:1px solid rgba(90,158,111,0.25);border-left:3px solid var(--green);border-radius:6px;padding:9px 12px;line-height:1.6;white-space:pre-wrap;">${modelAns}</div>
               </div>
             ` : ''}
+            ${prNoteActionsMarkup('long', i)}
           </div>
         </div>`;
     }).join('');
     prBindAccordion(container);
+    bindPracticeNoteActions(container);
+  }
+
+  function prNoteActionsMarkup(type, index) {
+    return `
+      <div class="pr-note-actions" data-note-type="${type}" data-note-index="${index}" data-mode="full">
+        <div class="pr-note-actions-label">Add to lecture notes as:</div>
+        <div class="pr-note-actions-row">
+          <button type="button" class="pr-note-mode active" data-note-mode="full">Full Q&amp;A</button>
+          <button type="button" class="pr-note-mode" data-note-mode="concept">Concept only</button>
+          <button type="button" class="pr-note-add">＋ Add to Notes</button>
+        </div>
+        <div class="pr-note-status" aria-live="polite"></div>
+      </div>
+    `;
+  }
+
+  function bindPracticeNoteActions(container) {
+    container.querySelectorAll('.pr-note-actions').forEach(actions => {
+      actions.querySelectorAll('.pr-note-mode').forEach(button => {
+        button.addEventListener('click', () => {
+          actions.dataset.mode = button.dataset.noteMode;
+          actions.querySelectorAll('.pr-note-mode').forEach(modeButton => {
+            modeButton.classList.toggle('active', modeButton === button);
+          });
+        });
+      });
+
+      actions.querySelector('.pr-note-add')?.addEventListener('click', () => {
+        const type = actions.dataset.noteType;
+        const index = Number(actions.dataset.noteIndex);
+        const mode = actions.dataset.mode;
+        const content = getPracticeNoteContent(type, index, mode);
+        if (!content) return;
+        savePracticeNote(content, type, index, mode, actions.querySelector('.pr-note-status'));
+      });
+    });
+  }
+
+  function getPracticeNoteContent(type, index, mode) {
+    if (type === 'mcq') {
+      const question = prState.questions?.mcq?.[index];
+      const result = prState.mcqResults[index] || {};
+      if (!question) return '';
+      const letters = ['A', 'B', 'C', 'D'];
+      const answerText = answerIndex => answerIndex >= 0
+        ? `${letters[answerIndex] || ''} — ${question.options[answerIndex] || ''}`
+        : 'Not answered';
+      const correctAnswer = answerText(result.correctIdx ?? -1);
+      if (mode === 'concept') return `MCQ concept: ${question.q} Correct principle: ${correctAnswer}`;
+      return `MCQ — Question: ${question.q} Your answer: ${answerText(result.selectedIdx ?? -1)} Correct answer: ${correctAnswer} Result: ${result.correct ? 'Correct' : 'Incorrect'}`;
+    }
+
+    if (type === 'fib') {
+      const question = prState.questions?.fill_blanks?.[index];
+      const result = prState.fibResults[index] || {};
+      if (!question) return '';
+      const sentence = `${question.before || ''}${result.correctAns || ''}${question.after || ''}`.trim();
+      if (mode === 'concept') return `Fill-in concept: ${sentence}`;
+      return `Fill-in-the-blank — Sentence: ${(question.before || '')}___${question.after || ''} Your answer: ${result.userAns || '(empty)'} Correct answer: ${result.correctAns || ''} Result: ${result.correct ? 'Correct' : 'Incorrect'}`;
+    }
+
+    if (type === 'long') {
+      const question = prState.questions?.long_answer?.[index];
+      const evaluation = prState.longEvals[index] || {};
+      if (!question) return '';
+      const keyPoints = Array.isArray(evaluation.key_points_found) ? evaluation.key_points_found.join('; ') : '';
+      const modelAnswer = evaluation.model_answer || question.model_answer || question.rubric || '';
+      if (mode === 'concept') return `Long-answer concept: ${keyPoints || evaluation.feedback || modelAnswer || question.hint || question.q}`;
+      return `Long answer — Question: ${question.q} Score: ${evaluation.score ?? 0}/10 Feedback: ${evaluation.feedback || 'No feedback available.'} Key points: ${keyPoints || 'None listed.'} Model answer: ${modelAnswer || 'Not available.'}`;
+    }
+
+    return '';
+  }
+
+  function savePracticeNote(content, type, index, mode, statusElement) {
+    if (!curVideoId) {
+      if (statusElement) statusElement.textContent = 'Open a YouTube lecture to save points to its notes.';
+      return;
+    }
+
+    const key = `rc_practice_notes_${curVideoId}`;
+    chrome.storage.local.get([key], result => {
+      if (chrome.runtime.lastError) {
+        if (statusElement) statusElement.textContent = `Could not read notes: ${chrome.runtime.lastError.message}`;
+        return;
+      }
+
+      const savedPoints = Array.isArray(result[key]) ? result[key] : [];
+      const entryId = `${prState.sessionId}-${type}-${index}-${mode}`;
+      const existing = savedPoints.some(point => point.id === entryId);
+      if (!existing) {
+        savedPoints.push({ id: entryId, content, type, mode, createdAt: Date.now() });
+      }
+
+      chrome.storage.local.set({ [key]: savedPoints }, () => {
+        if (chrome.runtime.lastError) {
+          if (statusElement) statusElement.textContent = `Could not save to notes: ${chrome.runtime.lastError.message}`;
+          return;
+        }
+        if (statusElement) statusElement.textContent = existing ? 'Already added to notes.' : 'Added to Important Points from Practice Quiz.';
+      });
+    });
   }
 
   function prBindAccordion(container) {
@@ -3353,4 +3478,3 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 }); // end DOMContentLoaded
-

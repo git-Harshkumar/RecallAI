@@ -1619,6 +1619,57 @@ body {
   border: 1px solid rgba(90,158,111,0.3);
   border-radius: 4px; padding: 2px 7px;
 }
+.pr-note-actions {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255,255,255,0.025);
+}
+.pr-note-actions-label {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.pr-note-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.pr-note-mode,
+.pr-note-add {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.pr-note-mode.active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(74,159,168,0.12);
+}
+.pr-note-add {
+  margin-left: auto;
+  border-color: rgba(90,158,111,0.45);
+  color: var(--green);
+}
+.pr-note-add:hover {
+  background: rgba(90,158,111,0.14);
+}
+.pr-note-status {
+  min-height: 0;
+  margin-top: 0;
+  color: var(--green);
+  font-size: 10px;
+}
+.pr-note-status:not(:empty) {
+  margin-top: 6px;
+}
 
 /* Results footer */
 .pr-results-footer {
@@ -2052,6 +2103,5 @@ body {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
-
 
 
